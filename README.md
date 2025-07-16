@@ -10,6 +10,36 @@ Sistema web em Django para upload e processamento de arquivos técnicos (PDF, DX
 - **Estimativa de tempo de corte** baseada em material e espessura
 - **API REST** para integração com outros sistemas
 - **Testes unitários** com 98% de cobertura
+- **Dashboard dinâmico de peças** (NOVO)
+  - Visualização de estatísticas agregadas (total de peças, subpeças, perímetro médio, etc)
+  - Gráficos de peças por material e por espessura
+  - Tabela paginada e buscável de peças principais
+  - Detalhamento de peça principal com subpeças e estatísticas
+  - Atualização automática dos dados (polling)
+  - Interface moderna e responsiva em React + Tailwind CSS
+
+## 🆕 Funcionalidades implementadas recentemente
+
+### Dashboard Dinâmico de Peças
+- **Aba "Dashboard"** no frontend React, acessível pelo menu de navegação
+- **Gráficos interativos** (Recharts) mostrando distribuição de peças por material e espessura
+- **Cards informativos** com totais e médias
+- **Tabela paginada** com busca de peças principais, integração com backend
+- **Detalhamento de peça**: clique em uma linha da tabela para abrir modal com estatísticas e subpeças
+- **Atualização automática**: polling a cada 10 segundos para dados sempre atualizados
+- **Responsividade**: layout adaptado para desktop e mobile
+
+### API REST para Dashboard
+- **Endpoint `/api/dashboard/stats/`**: estatísticas agregadas (totais, médias, últimas peças)
+- **Endpoint `/api/dashboard/pecas/`**: lista paginada e buscável de peças principais
+- **Endpoint `/api/dashboard/pecas/<codigo_peca>/`**: detalhes completos de uma peça principal e suas subpeças
+
+### Integração Frontend/Backend
+- **Proxy Vite** configurado para `/api` → backend Django
+- **CORS** habilitado no Django para permitir requisições do frontend React
+- **Componentes React** reutilizáveis para cards, gráficos, tabela e modal de detalhes
+
+---
 
 ## 🛠️ Tecnologias Utilizadas
 
@@ -17,6 +47,7 @@ Sistema web em Django para upload e processamento de arquivos técnicos (PDF, DX
 - **Processamento DXF**: ezdxf
 - **Arquivos compactados**: zipfile, rarfile
 - **Testes**: unittest + coverage
+- **Frontend**: React + Vite + Tailwind CSS + Recharts
 - **Python**: 3.10+
 
 ## 📋 Pré-requisitos

@@ -64,6 +64,47 @@ class DXFProcessor:
         
         return resultados
     
+    def process_single_dxf_completo(self, nome_base: str, conteudo_bytes: bytes, material: str = '', espessura: str = '') -> Dict:
+        """
+        Processa um único arquivo DXF, recebendo material e espessura (do PDF),
+        retornando o dicionário consolidado para integração PDF+DXF.
+        """
+        temp_file_path = None
+        try:
+            if len(conteudo_bytes) == 0:
+                raise Exception("Arquivo vazio")
+            temp_file_path = tempfile.mktemp(suffix='.dxf')
+            with open(temp_file_path, 'wb') as temp_file:
+                temp_file.write(conteudo_bytes)
+            if not os.path.exists(temp_file_path):
+                raise Exception("Falha ao criar arquivo temporário")
+            doc = ezdxf.readfile(temp_file_path)
+            msp = doc.modelspace()
+            perimetro_mm = self._calculate_perimeter(msp)
+            # Converter espessura para float se possível
+            try:
+                espessura_float = float(str(espessura).replace('mm','').replace(',','.').strip())
+            except Exception:
+                espessura_float = 0.0
+            tempo_corte_segundos = self._estimate_cutting_time(perimetro_mm, str(material), espessura_float)
+            resultado = {
+                "perimetro_mm": round(perimetro_mm, 2),
+                "tempo_corte_segundos": round(tempo_corte_segundos, 2)
+            }
+            return resultado
+        except Exception as e:
+            return {
+                "perimetro_mm": 0,
+                "tempo_corte_segundos": 0,
+                "erro": str(e)
+            }
+        finally:
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                except Exception:
+                    pass
+    
     def _process_single_dxf(self, caminho_arquivo: str, conteudo_bytes: bytes) -> Dict:
         """
         Processa um único arquivo DXF.
@@ -236,27 +277,16 @@ class DXFProcessor:
     def _estimate_cutting_time(self, perimetro_mm: float, material: str = None, espessura_mm: float = None) -> float:
         """
         Estima o tempo de corte baseado no perímetro e propriedades do material.
-        
-        Args:
-            perimetro_mm: Perímetro em milímetros
-            material: Tipo de material (opcional)
-            espessura_mm: Espessura em milímetros (opcional)
-            
-        Returns:
-            Tempo estimado em segundos
         """
-        # Fator de correção baseado no material (se fornecido)
-        material_factor = self._get_material_factor(material)
-        
-        # Fator de correção baseado na espessura (se fornecida)
-        thickness_factor = self._get_thickness_factor(espessura_mm)
-        
-        # Cálculo básico: tempo = distância / velocidade
+        # Garantir tipos corretos
+        if material is None:
+            material = ''
+        if espessura_mm is None:
+            espessura_mm = 0.0
+        material_factor = self._get_material_factor(str(material))
+        thickness_factor = self._get_thickness_factor(float(espessura_mm))
         tempo_base = perimetro_mm / self.cutting_speed_mm_per_second
-        
-        # Aplicar fatores de correção
         tempo_final = tempo_base * material_factor * thickness_factor
-        
         return tempo_final
     
     def _get_material_factor(self, material: str) -> float:

@@ -14,6 +14,7 @@ from rest_framework import status
 from .archive_processor import ArchiveProcessor
 from .dxf_processor import DXFProcessor
 from .views import UploadZipView
+from .models import PecaPrincipal, SubPeca, validar_dados_peca, validar_e_salvar_pecas_e_subpecas_do_json
 
 
 class ArchiveProcessorTestCase(TestCase):
@@ -874,26 +875,40 @@ class UploadZipViewTestCase(APITestCase):
         }
         mock_archive_processor.return_value = mock_processor
         
-        # Mock do processador DXF
-        with patch('uploadapi.views.DXFProcessor') as mock_dxf_processor:
-            mock_dxf = Mock()
-            mock_dxf.process_dxf_files.return_value = [
-                {'arquivo': 'arquivo1.dxf', 'perimetro_mm': 100, 'status': 'processado'}
-            ]
-            mock_dxf_processor.return_value = mock_dxf
+        # Mock do processamento integrado
+        with patch('uploadapi.views.processar_lote_pdfs_dxfs') as mock_processar:
+            mock_processar.return_value = {
+                'grupo1': [{
+                    'PecaPrincipal': 'grupo1',
+                    'SubPecas': {
+                        'subpeca1': {
+                            'Nome': 'Teste',
+                            'Material': 'Aço',
+                            'Espessura': '1.5mm',
+                            'PerimetroMm': 100.0,
+                            'TempoCorteSegundos': 2.0
+                        }
+                    }
+                }]
+            }
             
-            # Criar arquivo ZIP de teste
-            file_content = b'fake zip content'
-            uploaded_file = SimpleUploadedFile('test.zip', file_content)
-            
-            response = self.client.post(self.url, {'file': uploaded_file})
-            
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(response.data['status'], 'upload concluído com sucesso')
-            self.assertEqual(response.data['formato_arquivo'], 'ZIP')
-            self.assertEqual(response.data['total_arquivos'], 2)
-            self.assertEqual(response.data['arquivos_dxf_encontrados'], 1)
-            self.assertEqual(response.data['arquivos_dxf_processados'], 1)
+            # Mock da validação e salvamento
+            with patch('uploadapi.views.validar_e_salvar_pecas_e_subpecas_do_json') as mock_validar:
+                mock_validar.return_value = (True, ['grupo1'], [])
+                
+                # Criar arquivo ZIP de teste
+                file_content = b'fake zip content'
+                uploaded_file = SimpleUploadedFile('test.zip', file_content)
+                
+                response = self.client.post(self.url, {'file': uploaded_file})
+                
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.data['status'], 'upload concluído com sucesso')
+                self.assertEqual(response.data['formato_arquivo'], 'ZIP')
+                self.assertEqual(response.data['total_arquivos'], 2)
+                self.assertIn('grupos', response.data)
+                self.assertIn('validacao', response.data)
+                self.assertTrue(response.data['validacao']['sucesso'])
     
     @patch('uploadapi.views.ArchiveProcessor')
     def test_post_valid_rar(self, mock_archive_processor):
@@ -938,6 +953,208 @@ class UploadZipViewTestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Erro ao processar o arquivo', response.data['error'])
+
+
+class ModelosTestCase(TestCase):
+    """Testes para os modelos PecaPrincipal e SubPeca"""
+    
+    def test_criar_peca_principal(self):
+        """Testa criação de uma Peça Principal"""
+        peca = PecaPrincipal.objects.create(codigo="33.03.10360.00")
+        self.assertEqual(peca.codigo, "33.03.10360.00")
+        self.assertIsNotNone(peca.created_at)
+        self.assertIsNotNone(peca.updated_at)
+    
+    def test_criar_subpeca(self):
+        """Testa criação de uma SubPeça"""
+        peca_principal = PecaPrincipal.objects.create(codigo="33.03.10360.00")
+        subpeca = SubPeca.objects.create(
+            peca_principal=peca_principal,
+            codigo="33.03.10360",
+            nome="Denominação: Fechamento menor colimador primario Grupo:",
+            material="SAE 1006 Material:",
+            espessura="A # (mm): 1.2",
+            perimetro_mm=150.5,
+            tempo_corte_segundos=3.01
+        )
+        self.assertEqual(subpeca.peca_principal, peca_principal)
+        self.assertEqual(subpeca.codigo, "33.03.10360")
+        self.assertEqual(subpeca.perimetro_mm, 150.5)
+    
+    def test_relacionamento_peca_subpecas(self):
+        """Testa relacionamento entre Peça Principal e SubPeças"""
+        peca = PecaPrincipal.objects.create(codigo="33.03.10360.00")
+        subpeca1 = SubPeca.objects.create(
+            peca_principal=peca,
+            codigo="33.03.10360.01",
+            nome="SubPeça 1",
+            material="Aço",
+            espessura="1.5mm",
+            perimetro_mm=100.0,
+            tempo_corte_segundos=2.0
+        )
+        subpeca2 = SubPeca.objects.create(
+            peca_principal=peca,
+            codigo="33.03.10360.02",
+            nome="SubPeça 2",
+            material="Alumínio",
+            espessura="2.0mm",
+            perimetro_mm=200.0,
+            tempo_corte_segundos=4.0
+        )
+        
+        # Verificar relacionamento
+        self.assertEqual(peca.subpecas.count(), 2)
+        self.assertIn(subpeca1, peca.subpecas.all())
+        self.assertIn(subpeca2, peca.subpecas.all())
+
+class ValidacaoTestCase(TestCase):
+    """Testes para validação de dados"""
+    
+    def test_validar_dados_peca_validos(self):
+        """Testa validação de dados válidos"""
+        dados = {
+            "Nome": "Teste",
+            "Material": "Aço",
+            "Espessura": "1.5mm",
+            "PerimetroMm": 100.0,
+            "TempoCorteSegundos": 2.0
+        }
+        valido, erro = validar_dados_peca(dados)
+        self.assertTrue(valido)
+        self.assertIsNone(erro)
+    
+    def test_validar_dados_peca_campo_vazio(self):
+        """Testa validação com campo vazio"""
+        dados = {
+            "Nome": "",
+            "Material": "Aço",
+            "Espessura": "1.5mm",
+            "PerimetroMm": 100.0,
+            "TempoCorteSegundos": 2.0
+        }
+        valido, erro = validar_dados_peca(dados)
+        self.assertFalse(valido)
+        self.assertIn("Nome", erro)
+    
+    def test_validar_dados_peca_campo_nulo(self):
+        """Testa validação com campo nulo"""
+        dados = {
+            "Nome": "Teste",
+            "Material": None,
+            "Espessura": "1.5mm",
+            "PerimetroMm": 100.0,
+            "TempoCorteSegundos": 2.0
+        }
+        valido, erro = validar_dados_peca(dados)
+        self.assertFalse(valido)
+        self.assertIn("Material", erro)
+    
+    def test_validar_dados_peca_valores_negativos(self):
+        """Testa validação com valores negativos"""
+        dados = {
+            "Nome": "Teste",
+            "Material": "Aço",
+            "Espessura": "1.5mm",
+            "PerimetroMm": -100.0,
+            "TempoCorteSegundos": 2.0
+        }
+        valido, erro = validar_dados_peca(dados)
+        self.assertFalse(valido)
+        self.assertIn("positivos", erro)
+    
+    def test_validar_dados_peca_valores_invalidos(self):
+        """Testa validação com valores inválidos"""
+        dados = {
+            "Nome": "Teste",
+            "Material": "Aço",
+            "Espessura": "1.5mm",
+            "PerimetroMm": "inválido",
+            "TempoCorteSegundos": 2.0
+        }
+        valido, erro = validar_dados_peca(dados)
+        self.assertFalse(valido)
+        self.assertIn("números válidos", erro)
+
+class PersistenciaTestCase(TestCase):
+    """Testes para persistência no banco de dados"""
+    
+    def test_validar_e_salvar_pecas_validas(self):
+        """Testa salvamento de peças válidas"""
+        json_grupos = {
+            "33.03.10360.00": [{
+                "PecaPrincipal": "33.03.10360.00",
+                "SubPecas": {
+                    "33.03.10360.01": {
+                        "Nome": "SubPeça 1",
+                        "Material": "Aço",
+                        "Espessura": "1.5mm",
+                        "PerimetroMm": 100.0,
+                        "TempoCorteSegundos": 2.0
+                    },
+                    "33.03.10360.02": {
+                        "Nome": "SubPeça 2",
+                        "Material": "Alumínio",
+                        "Espessura": "2.0mm",
+                        "PerimetroMm": 200.0,
+                        "TempoCorteSegundos": 4.0
+                    }
+                }
+            }]
+        }
+        
+        sucesso, sucessos, erros = validar_e_salvar_pecas_e_subpecas_do_json(json_grupos)
+        
+        self.assertTrue(sucesso)
+        self.assertEqual(len(sucessos), 1)
+        self.assertEqual(len(erros), 0)
+        
+        # Verificar se foi salvo no banco
+        peca = PecaPrincipal.objects.get(codigo="33.03.10360.00")
+        self.assertEqual(peca.subpecas.count(), 2)
+    
+    def test_validar_e_salvar_pecas_invalidas(self):
+        """Testa salvamento com peças inválidas"""
+        json_grupos = {
+            "33.03.10360.00": [{
+                "PecaPrincipal": "33.03.10360.00",
+                "SubPecas": {
+                    "33.03.10360.01": {
+                        "Nome": "",  # Inválido
+                        "Material": "Aço",
+                        "Espessura": "1.5mm",
+                        "PerimetroMm": 100.0,
+                        "TempoCorteSegundos": 2.0
+                    }
+                }
+            }]
+        }
+        
+        sucesso, sucessos, erros = validar_e_salvar_pecas_e_subpecas_do_json(json_grupos)
+        
+        self.assertFalse(sucesso)
+        self.assertEqual(len(sucessos), 0)
+        self.assertEqual(len(erros), 1)
+        self.assertIn("Nome", erros[0])
+        
+        # Verificar que nada foi salvo no banco
+        self.assertEqual(PecaPrincipal.objects.count(), 0)
+    
+    def test_validar_e_salvar_peca_sem_subpecas(self):
+        """Testa salvamento de peça sem subpeças"""
+        json_grupos = {
+            "33.03.10360.00": [{
+                "PecaPrincipal": "33.03.10360.00",
+                "SubPecas": {}
+            }]
+        }
+        
+        sucesso, sucessos, erros = validar_e_salvar_pecas_e_subpecas_do_json(json_grupos)
+        
+        self.assertFalse(sucesso)
+        self.assertEqual(len(sucessos), 0)
+        self.assertEqual(len(erros), 1)
+        self.assertIn("Nenhuma SubPeca encontrada", erros[0])
 
 
 if __name__ == '__main__':
